@@ -1,248 +1,205 @@
-import 'dart:async';
+import 'dart:convert';
+
+import 'config.dart';
+
+import 'package:http/http.dart' as http;
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+
+class ApiException implements Exception {
+  final String message;
+  final int? statusCode;
+  ApiException(this.message, [this.statusCode]);
+  @override
+  String toString() => message;
+}
 
 class ApiService {
-  // Таны Backend-ийн нэгдсэн 1 URL (Нэг route рүү бүх params явна)
-  static const String baseUrl = "http://127.0.0.1:8000/api/mdpay/";
+  static String get baseUrl => AppConfig.mobileApiUrl;
 
-  static double _demoBalance = 1850000.0;
+  static const _storage = FlutterSecureStorage();
+  static const _tokenKey = 'mdpay_token';
 
-  static final List _demoInvoices = [
-    {
-      "id": 101,
-      "sender_email": "merchant@mdpay.mn",
-      "receiver_email": "customer@mdpay.mn",
-      "amount": 125000,
-      "description": "Мандах ИС - Сургалтын төлбөр",
-      "qr_type": "DYNAMIC",
-      "qr_code": "MDPAY_DYN_101_125000",
-      "status": "PENDING",
-      "date": "2026-11-16 10:30",
-    },
-    {
-      "id": 102,
-      "sender_email": "coffee@mdpay.mn",
-      "receiver_email": "customer@mdpay.mn",
-      "amount": 18500,
-      "description": "Caffe Bene - Захиалга #402",
-      "qr_type": "DYNAMIC",
-      "qr_code": "MDPAY_DYN_102_18500",
-      "status": "PENDING",
-      "date": "2026-11-16 11:15",
-    },
-    {
-      "id": 103,
-      "sender_email": "customer@mdpay.mn",
-      "receiver_email": "friend@mdpay.mn",
-      "amount": 45000,
-      "description": "Өдрийн хоолны тооцоо",
-      "qr_type": "QUICK",
-      "qr_code": "MDPAY_QUICK_103_0",
-      "status": "PAID",
-      "date": "2026-11-15 14:20",
-    },
-  ];
+  static Future<String?> getToken() => _storage.read(key: _tokenKey);
+  static Future<void> _saveToken(String t) =>
+      _storage.write(key: _tokenKey, value: t);
+  static Future<void> logout() => _storage.delete(key: _tokenKey);
 
-  static final List _demoTransactions = [
-    {
-      "id": 501,
-      "title": "Банкны данснаас цэнэглэлт",
-      "counterparty": "Хаан Банк - 5000123456",
-      "amount": 1900000,
-      "type": "INCOME",
-      "method": "BANK_API",
-      "date": "2026-11-14 09:00",
-    },
-    {
-      "id": 502,
-      "title": "Өдрийн хоолны тооцоо",
-      "counterparty": "friend@mdpay.mn",
-      "amount": 45000,
-      "type": "EXPENSE",
-      "method": "DYNAMIC_QR",
-      "date": "2026-11-15 14:20",
-    },
-    {
-      "id": 503,
-      "title": "Номын сангийн хураамж",
-      "counterparty": "merchant@mdpay.mn",
-      "amount": 5000,
-      "type": "EXPENSE",
-      "method": "QUICK_QR",
-      "date": "2026-11-15 16:45",
-    },
-  ];
+  /// Бүх action энэ нэг функцээр дамжина
+  static Future<Map<String, dynamic>> _call(
+    String action, {
+    Map<String, dynamic> data = const {},
+    bool auth = true,
+  }) async {
+    final headers = <String, String>{'Content-Type': 'application/json'};
+    if (auth) {
+      final token = await getToken();
+      if (token == null) throw ApiException('Нэвтэрнэ үү', 401);
+      headers['Authorization'] = 'Bearer $token';
+    }
 
-  // Бүх хүсэлтийг 1 URL руу action болон params-аар илгээх үндсэн функц
-  Future sendRequest(String action, Map params) async {
-    await Future.delayed(const Duration(milliseconds: 200));
-    return _handleAction(action, params);
+    final http.Response res;
+    try {
+      res = await http
+          .post(
+            Uri.parse(baseUrl),
+            headers: headers,
+            body: jsonEncode({'action': action, ...data}),
+          )
+          .timeout(const Duration(seconds: 15));
+    } catch (_) {
+      throw ApiException('Сервертэй холбогдож чадсангүй');
+    }
+
+    final json = jsonDecode(res.body) as Map<String, dynamic>;
+    if (res.statusCode >= 400) {
+      if (res.statusCode == 401 && auth) await logout(); // token хүчингүй
+      throw ApiException(json['error'] ?? 'Алдаа гарлаа', res.statusCode);
+    }
+    return json;
   }
 
-  Map _handleAction(String action, Map params) {
-    switch (action) {
-      case "login":
-        String email = (params["email"] ?? "").toString().trim();
-        String password = (params["password"] ?? "").toString().trim();
+  // ---------- Auth ----------
+  static Future<Map<String, dynamic>> login(
+    String email,
+    String password,
+  ) async {
+    final json = await _call(
+      'login',
+      data: {'email': email, 'password': password},
+      auth: false,
+    );
+    await _saveToken(json['token']);
+    return json['user'];
+  }
 
-        if (email.isEmpty || password.isEmpty) {
+  static Future<Map<String, dynamic>> register({
+    required String name,
+    required String email,
+    required String password,
+    String type = 'PERSONAL',
+    String? businessName,
+  }) async {
+    final json = await _call(
+      'register',
+      data: {
+        'name': name,
+        'email': email,
+        'password': password,
+        'type': type,
+        if (businessName != null) 'businessName': businessName,
+      },
+      auth: false,
+    );
+    await _saveToken(json['token']);
+    return json['user'];
+  }
+
+  static Future<Map<String, dynamic>> me() => _call('me');
+  static Future<Map<String, dynamic>> summary() => _call('summary');
+
+  static Future<List<dynamic>> transactions() async =>
+      (await _call('transactions'))['transactions'];
+
+  static Future<List<dynamic>> invoices() async =>
+      (await _call('invoices'))['invoices'];
+
+  static Future<Map<String, dynamic>> createInvoice(
+    String amount, {
+    String? description,
+  }) => _call(
+    'create_invoice',
+    data: {
+      'amount': amount,
+      if (description != null) 'description': description,
+    },
+  );
+
+  static bool _isIncome(String kind) {
+    const incomeKinds = {'income', 'credit', 'deposit', 'topup', 'transfer_in'};
+    return incomeKinds.contains(kind.toLowerCase());
+  }
+
+  Future<Map<String, dynamic>> sendRequest(
+    String action,
+    Map<String, dynamic> data,
+  ) async {
+    try {
+      switch (action) {
+        case 'login':
+        case 'register':
+          final user = action == 'login'
+              ? await ApiService.login(data['email'], data['password'])
+              : await ApiService.register(
+                  name: data['name'],
+                  email: data['email'],
+                  password: data['password'],
+                  type: data['type'] ?? 'PERSONAL',
+                  businessName: data['businessName'],
+                );
+          try {
+            final s = await ApiService.summary();
+            user['wallet_id'] = s['walletId'];
+          } catch (_) {}
+          return {'status': 'success', 'user': user};
+
+        case 'get_dashboard':
+          final s = await ApiService.summary();
+          final txs = await ApiService.transactions();
+          final invs = await ApiService.invoices();
           return {
-            "status": "error",
-            "message": "Имэйл хаяг болон нууц үгээ бүрэн оруулна уу!",
+            'status': 'success',
+            'balance': s['balance'],
+            'pending_invoices_count': s['pendingInvoices'] ?? 0,
+            'recent_transactions_count': txs.length,
+            'invoices': invs
+                .map(
+                  (i) => {
+                    'id': int.tryParse('${i['id']}'),
+                    'description': i['description'] ?? '',
+                    'amount': i['amount'],
+                    'status': i['status'],
+                    'sender_email': '',
+                    'receiver_email': '',
+                    'qr_code': 'MDPAY_INV_${i['id']}',
+                  },
+                )
+                .toList(),
+            'transactions': txs
+                .map(
+                  (t) => {
+                    'type': _isIncome('${t['kind']}') ? 'INCOME' : 'EXPENSE',
+                    'title': (t['note'] ?? '').toString().isEmpty
+                        ? '${t['kind']}'
+                        : t['note'],
+                    'counterparty': t['counterpartyName'] ?? '',
+                    'date': '${t['createdAt']}'.split('T').first,
+                    'amount': t['amount'],
+                  },
+                )
+                .toList(),
           };
-        }
-        return {
-          "status": "success",
-          "user": {
-            "name": email.contains("merchant")
-                ? "Мерчант Байгууллага"
-                : "Bumanhuslen Erdenebaatar",
-            "email": email,
-            "wallet_id": "MDP-99887766",
-            "balance": _demoBalance,
-          },
-        };
 
-      case "get_dashboard":
-        int pendingCount = _demoInvoices
-            .where((inv) => inv["status"] == "PENDING")
-            .length;
-        return {
-          "status": "success",
-          "balance": _demoBalance,
-          "pending_invoices_count": pendingCount,
-          "recent_transactions_count": _demoTransactions.length,
-          "invoices": List.from(_demoInvoices),
-          "transactions": List.from(_demoTransactions),
-        };
-
-      case "generate_qr":
-        String qrType = (params["qr_type"] ?? "DYNAMIC").toString();
-        double amount = double.tryParse(params["amount"].toString()) ?? 0;
-        String desc = (params["description"] ?? "MDPay QR Төлбөр").toString();
-        int nextId = 100 + _demoInvoices.length + 1;
-
-        if (qrType == "DYNAMIC" && amount <= 0) {
-          return {
-            "status": "error",
-            "message": "Dynamic QR үүсгэхийн тулд үнийн дүн оруулна уу!",
-          };
-        }
-
-        String qrCode = qrType == "DYNAMIC"
-            ? "MDPAY_DYN_${nextId}_${amount.toInt()}"
-            : "MDPAY_QUICK_${nextId}_OPEN";
-
-        return {
-          "status": "success",
-          "qr_code": qrCode,
-          "qr_type": qrType,
-          "amount": amount,
-          "description": desc,
-        };
-
-      case "create_invoice":
-        String receiver = (params["receiver_email"] ?? "").toString().trim();
-        double amount = double.tryParse(params["amount"].toString()) ?? 0;
-        String desc = (params["description"] ?? "").toString().trim();
-
-        if (receiver.isEmpty || amount <= 0 || desc.isEmpty) {
-          return {
-            "status": "error",
-            "message": "Имэйл, үнийн дүн болон утгыг бүрэн оруулна уу!",
-          };
-        }
-
-        int newId = 100 + _demoInvoices.length + 1;
-        Map newInv = {
-          "id": newId,
-          "sender_email": params["sender_email"] ?? "customer@mdpay.mn",
-          "receiver_email": receiver,
-          "amount": amount.toInt(),
-          "description": desc,
-          "qr_type": "DYNAMIC",
-          "qr_code": "MDPAY_DYN_${newId}_${amount.toInt()}",
-          "status": "PENDING",
-          "date": "2026-11-16 15:10",
-        };
-        _demoInvoices.insert(0, newInv);
-
-        return {
-          "status": "success",
-          "message": "$receiver хаяг руу нэхэмжлэл амжилттай илгээгдлээ!",
-          "invoice": newInv,
-        };
-
-      case "pay_qr_or_invoice":
-        double amount = double.tryParse(params["amount"].toString()) ?? 0;
-        String desc = (params["description"] ?? "QR Төлбөр").toString();
-        String counterparty = (params["counterparty"] ?? "MDPay Мерчант")
-            .toString();
-        var invoiceId = params["invoice_id"];
-
-        if (amount <= 0) {
-          return {
-            "status": "error",
-            "message": "Төлөх үнийн дүн 0-ээс их байх ёстой!",
-          };
-        }
-
-        if (amount > _demoBalance) {
-          return {
-            "status": "error",
-            "message":
-                "Гүйлгээ амжилтгүй: Дансны үлдэгдэл хүрэлцэхгүй байна! (${_demoBalance.toInt()}₮)",
-          };
-        }
-
-        _demoBalance -= amount;
-
-        if (invoiceId != null) {
-          for (var inv in _demoInvoices) {
-            if (inv["id"] == invoiceId) {
-              inv["status"] = "PAID";
-            }
+        case 'generate_qr':
+          if (data['qr_type'] == 'QUICK') {
+            return {
+              'status': 'error',
+              'message': 'QuickPay (дүнгүй) QR серверт хараахан хийгдээгүй',
+            };
           }
-        }
+          final r = await ApiService.createInvoice(
+            '${data['amount']}',
+            description: data['description'],
+          );
+          return {'status': 'success', 'qr_code': r['qrText']};
 
-        _demoTransactions.insert(0, {
-          "id": 500 + _demoTransactions.length + 1,
-          "title": desc,
-          "counterparty": counterparty,
-          "amount": amount.toInt(),
-          "type": "EXPENSE",
-          "method": params["method"] ?? "QR_PAYMENT",
-          "date": "2026-11-16 15:25",
-        });
-
-        return {
-          "status": "success",
-          "message": "Гүйлгээ амжилттай хийгдлээ!",
-          "new_balance": _demoBalance,
-        };
-
-      case "top_up":
-        double amount = double.tryParse(params["amount"].toString()) ?? 0;
-        if (amount <= 0) {
-          return {"status": "error", "message": "Цэнэглэх дүнгээ оруулна уу!"};
-        }
-        _demoBalance += amount;
-        _demoTransactions.insert(0, {
-          "id": 500 + _demoTransactions.length + 1,
-          "title": "Банкны API-аар данс цэнэглэлт",
-          "counterparty": "Банкны апп холболт",
-          "amount": amount.toInt(),
-          "type": "INCOME",
-          "method": "BANK_API",
-          "date": "2026-11-16 15:30",
-        });
-        return {
-          "status": "success",
-          "message": "Данс ${amount.toInt()}₮-өөр амжилттай цэнэглэгдлээ!",
-          "new_balance": _demoBalance,
-        };
-
-      default:
-        return {"status": "error", "message": "Тодорхойгүй үйлдэл: $action"};
+        default:
+          return {
+            'status': 'error',
+            'message': 'Энэ үйлдэл серверт хараахан хийгдээгүй ($action)',
+          };
+      }
+    } on ApiException catch (e) {
+      return {'status': 'error', 'message': e.message};
     }
   }
 }

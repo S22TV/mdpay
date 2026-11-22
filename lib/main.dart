@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 import 'api_service.dart';
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await dotenv.load(fileName: '.env');
   runApp(const MyApp());
 }
 
@@ -35,10 +38,10 @@ class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
 
   @override
-  State createState() => _LoginScreenState();
+  State<LoginScreen> createState() => _LoginScreenState();
 }
 
-class _LoginScreenState extends State {
+class _LoginScreenState extends State<LoginScreen> {
   final ApiService _apiService = ApiService();
   final TextEditingController _emailCtrl = TextEditingController(
     text: "customer@mdpay.mn",
@@ -46,21 +49,26 @@ class _LoginScreenState extends State {
   final TextEditingController _passCtrl = TextEditingController(
     text: "Demo1234!",
   );
+  final TextEditingController _nameCtrl = TextEditingController();
 
   bool _isLoginMode = true;
   bool _obscureText = true;
   bool _isLoading = false;
 
-  Future _submitAuth() async {
+  Future<void> _submitAuth() async {
     setState(() => _isLoading = true);
 
-    final res = await _apiService.sendRequest("login", {
-      "email": _emailCtrl.text.trim(),
-      "password": _passCtrl.text.trim(),
-    });
+    final res = await _apiService.sendRequest(
+      _isLoginMode ? "login" : "register",
+      {
+        "email": _emailCtrl.text.trim(),
+        "password": _passCtrl.text,
+        if (!_isLoginMode) "name": _nameCtrl.text.trim(),
+      },
+    );
 
-    setState(() => _isLoading = false);
     if (!mounted) return;
+    setState(() => _isLoading = false);
 
     if (res["status"] == "success") {
       Navigator.pushReplacement(
@@ -248,6 +256,19 @@ class _LoginScreenState extends State {
                       ),
                     ),
                     const SizedBox(height: 20),
+                    if (!_isLoginMode) ...[
+                      TextField(
+                        controller: _nameCtrl,
+                        decoration: InputDecoration(
+                          labelText: "Нэр",
+                          prefixIcon: const Icon(Icons.person_outline),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                    ],
                     TextField(
                       controller: _emailCtrl,
                       keyboardType: TextInputType.emailAddress,
@@ -280,6 +301,7 @@ class _LoginScreenState extends State {
                         ),
                       ),
                     ),
+
                     const SizedBox(height: 24),
                     SizedBox(
                       width: double.infinity,
@@ -380,14 +402,14 @@ class _LoginScreenState extends State {
 // ҮНДСЭН WORKSPACE БОЛОН 4 ЦЭС УДИРДАХ ХУУДАС
 // ============================================================================
 class MainWorkspaceScreen extends StatefulWidget {
-  final Map userData;
+  final Map<String, dynamic> userData;
   const MainWorkspaceScreen({super.key, required this.userData});
 
   @override
-  State createState() => _MainWorkspaceScreenState();
+  State<MainWorkspaceScreen> createState() => _MainWorkspaceScreenState();
 }
 
-class _MainWorkspaceScreenState extends State {
+class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
   final ApiService _apiService = ApiService();
   int _selectedIndex = 0;
 
@@ -395,8 +417,8 @@ class _MainWorkspaceScreenState extends State {
   bool _hideBalance = false;
   int _pendingInvoicesCount = 0;
   int _recentTxCount = 0;
-  List _invoices = [];
-  List _transactions = [];
+  List<dynamic> _invoices = [];
+  List<dynamic> _transactions = [];
   bool _isLoading = true;
 
   String _qrType = "DYNAMIC";
@@ -411,10 +433,7 @@ class _MainWorkspaceScreenState extends State {
   String _searchText = "";
   String _typeFilter = "ALL";
 
-  Map get currentUser {
-    final widgetObj = widget as MainWorkspaceScreen;
-    return widgetObj.userData;
-  }
+  Map<String, dynamic> get currentUser => widget.userData;
 
   @override
   void initState() {
@@ -422,7 +441,7 @@ class _MainWorkspaceScreenState extends State {
     _loadDashboard();
   }
 
-  Future _loadDashboard() async {
+  Future<void> _loadDashboard() async {
     setState(() => _isLoading = true);
     final res = await _apiService.sendRequest("get_dashboard", {
       "email": currentUser["email"],
@@ -436,6 +455,11 @@ class _MainWorkspaceScreenState extends State {
         _transactions = List.from(res["transactions"] ?? []);
         _isLoading = false;
       });
+    } else if (mounted) {
+      setState(() => _isLoading = false);
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(res["message"] ?? "Алдаа гарлаа")));
     }
   }
 
@@ -445,7 +469,7 @@ class _MainWorkspaceScreenState extends State {
 
   @override
   Widget build(BuildContext context) {
-    final List screens = [
+    final List<Widget> screens = [
       _buildDashboardTab(),
       _buildQrSystemTab(),
       _buildInvoicesTab(),
@@ -510,7 +534,9 @@ class _MainWorkspaceScreenState extends State {
           ),
           IconButton(
             tooltip: "Гарах",
-            onPressed: () {
+            onPressed: () async {
+              await ApiService.logout(); // token-ийг төхөөрөмжөөс устгана
+              if (!context.mounted) return;
               Navigator.pushReplacement(
                 context,
                 MaterialPageRoute(builder: (_) => const LoginScreen()),
