@@ -113,7 +113,27 @@ class ApiService {
       if (description != null) 'description': description,
     },
   );
+  static Future<Map<String, dynamic>> lookupAccount(
+    String accountNumber,
+  ) async => (await _call(
+    'lookup_account',
+    data: {'accountNumber': accountNumber},
+  ))['account'];
 
+  static Future<Map<String, dynamic>> transfer({
+    required String accountNumber,
+    required String amount,
+    required String password,
+    String? note,
+  }) => _call(
+    'transfer',
+    data: {
+      'accountNumber': accountNumber,
+      'amount': amount,
+      'password': password,
+      if (note != null && note.isNotEmpty) 'note': note,
+    },
+  );
   static bool _isIncome(String kind) {
     const incomeKinds = {'income', 'credit', 'deposit', 'topup', 'transfer_in'};
     return incomeKinds.contains(kind.toLowerCase());
@@ -191,7 +211,20 @@ class ApiService {
             description: data['description'],
           );
           return {'status': 'success', 'qr_code': r['qrText']};
+        case 'lookup_account':
+          final acc = await ApiService.lookupAccount(
+            '${data['accountNumber']}',
+          );
+          return {'status': 'success', 'account': acc};
 
+        case 'transfer':
+          await ApiService.transfer(
+            accountNumber: '${data['accountNumber']}',
+            amount: '${data['amount']}',
+            password: '${data['password']}',
+            note: data['note'],
+          );
+          return {'status': 'success', 'message': 'Шилжүүлэг амжилттай'};
         default:
           return {
             'status': 'error',

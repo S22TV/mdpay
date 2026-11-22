@@ -1361,70 +1361,206 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
   }
 
   void _showDirectTransferSheet() {
-    final receiverCtrl = TextEditingController(text: "friend@mdpay.mn");
+    final accCtrl = TextEditingController();
     final amountCtrl = TextEditingController();
     final descCtrl = TextEditingController(text: "Мөнгөн шилжүүлэг");
+    final passCtrl = TextEditingController();
+    Map<String, dynamic>? receiver;
+    bool askPassword = false;
+    bool busy = false;
+    String? error;
 
     showDialog(
       context: context,
-      builder: (_) => AlertDialog(
-        title: const Text("Мөнгө шилжүүлэх"),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: receiverCtrl,
-                decoration: const InputDecoration(
-                  labelText: "Хүлээн авагчийн имэйл",
-                ),
-              ),
-              TextField(
-                controller: amountCtrl,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(labelText: "Дүн (₮)"),
-              ),
-              TextField(
-                controller: descCtrl,
-                decoration: const InputDecoration(labelText: "Гүйлгээний утга"),
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text("Болих"),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              Navigator.pop(context);
-              final res = await _apiService.sendRequest("pay_qr_or_invoice", {
-                "amount": amountCtrl.text.trim(),
-                "description": descCtrl.text.trim(),
-                "counterparty": receiverCtrl.text.trim(),
-                "method": "TRANSFER",
-              });
-              if (!mounted) return;
+      barrierDismissible: false,
+      builder: (dialogCtx) => StatefulBuilder(
+        builder: (ctx, setD) {
+          void resetCheck() => setD(() {
+            receiver = null;
+            askPassword = false;
+            error = null;
+          });
+
+          Future<void> check() async {
+            setD(() {
+              busy = true;
+              error = null;
+              receiver = null;
+            });
+            final res = await _apiService.sendRequest("lookup_account", {
+              "accountNumber": accCtrl.text.trim(),
+            });
+            setD(() {
+              busy = false;
               if (res["status"] == "success") {
-                await _loadDashboard();
-                _showSuccessReceiptDialog(
-                  amount: amountCtrl.text.trim(),
-                  desc: descCtrl.text.trim(),
-                  code: receiverCtrl.text.trim(),
-                );
+                receiver = Map<String, dynamic>.from(res["account"]);
               } else {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text(res["message"] ?? ""),
-                    backgroundColor: Colors.redAccent,
-                  ),
-                );
+                error = res["message"] ?? "Данс олдсонгүй";
               }
-            },
-            child: const Text("Шилжүүлэх"),
-          ),
-        ],
+            });
+          }
+
+          Future<void> submit() async {
+            setD(() {
+              busy = true;
+              error = null;
+            });
+            final res = await _apiService.sendRequest("transfer", {
+              "accountNumber": accCtrl.text.trim(),
+              "amount": amountCtrl.text.trim(),
+              "password": passCtrl.text,
+              "note": descCtrl.text.trim(),
+            });
+            if (res["status"] == "success") {
+              if (dialogCtx.mounted) Navigator.pop(dialogCtx);
+              if (!mounted) return;
+              await _loadDashboard();
+              _showSuccessReceiptDialog(
+                amount: amountCtrl.text.trim(),
+                desc: descCtrl.text.trim(),
+                code: receiver?["name"] ?? accCtrl.text.trim(),
+              );
+            } else {
+              setD(() {
+                busy = false;
+                error = res["message"] ?? "Алдаа гарлаа";
+              });
+            }
+          }
+
+          return AlertDialog(
+            title: Text(
+              askPassword ? "Нууц үгээ баталгаажуулах" : "Мөнгө шилжүүлэх",
+            ),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (!askPassword) ...[
+                    TextField(
+                      controller: accCtrl,
+                      keyboardType: TextInputType.number,
+                      onChanged: (_) => resetCheck(),
+                      decoration: const InputDecoration(
+                        labelText: "Хүлээн авагчийн дансны дугаар",
+                        prefixIcon: Icon(Icons.numbers),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    if (receiver == null)
+                      SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton.icon(
+                          onPressed: busy || accCtrl.text.trim().isEmpty
+                              ? null
+                              : check,
+                          icon: const Icon(Icons.search),
+                          label: Text(busy ? "Шалгаж байна..." : "Шалгах"),
+                        ),
+                      )
+                    else ...[
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFE6F4EA),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Row(
+                          children: [
+                            const Icon(
+                              Icons.verified_user,
+                              color: Colors.green,
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    receiver!["name"],
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                  Text(
+                                    "Данс: ${receiver!["accountNumber"]}",
+                                    style: const TextStyle(fontSize: 12),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      TextField(
+                        controller: amountCtrl,
+                        keyboardType: TextInputType.number,
+                        decoration: const InputDecoration(labelText: "Дүн (₮)"),
+                      ),
+                      TextField(
+                        controller: descCtrl,
+                        decoration: const InputDecoration(
+                          labelText: "Гүйлгээний утга",
+                        ),
+                      ),
+                    ],
+                  ] else ...[
+                    Text(
+                      "${receiver!["name"]} руу ${amountCtrl.text.trim()} ₮ шилжүүлнэ.",
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: passCtrl,
+                      obscureText: true,
+                      autofocus: true,
+                      decoration: const InputDecoration(
+                        labelText: "Нууц үг",
+                        prefixIcon: Icon(Icons.lock_outline),
+                      ),
+                    ),
+                  ],
+                  if (error != null) ...[
+                    const SizedBox(height: 10),
+                    Text(
+                      error!,
+                      style: const TextStyle(color: Colors.redAccent),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: busy ? null : () => Navigator.pop(dialogCtx),
+                child: const Text("Болих"),
+              ),
+              if (receiver != null && !askPassword)
+                ElevatedButton(
+                  onPressed: () {
+                    if ((int.tryParse(amountCtrl.text.trim()) ?? 0) <= 0) {
+                      setD(() => error = "Дүн оруулна уу");
+                      return;
+                    }
+                    setD(() {
+                      askPassword = true;
+                      error = null;
+                    });
+                  },
+                  child: const Text("Шилжүүлэх"),
+                ),
+              if (askPassword)
+                ElevatedButton(
+                  onPressed: busy || passCtrl.text.isEmpty && false
+                      ? null
+                      : submit,
+                  child: Text(busy ? "Түр хүлээнэ үү..." : "Баталгаажуулах"),
+                ),
+            ],
+          );
+        },
       ),
     );
   }
