@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:mobile_scanner/mobile_scanner.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 
 import 'api_service.dart';
 
@@ -47,7 +49,7 @@ class _LoginScreenState extends State<LoginScreen> {
     text: "customer@mdpay.mn",
   );
   final TextEditingController _passCtrl = TextEditingController(
-    text: "Demo1234!",
+    text: "Demo12345!",
   );
   final TextEditingController _nameCtrl = TextEditingController();
 
@@ -365,7 +367,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                 onPressed: () {
                                   setState(() {
                                     _emailCtrl.text = "merchant@mdpay.mn";
-                                    _passCtrl.text = "Demo1234!";
+                                    _passCtrl.text = "Demo12345!";
                                   });
                                 },
                               ),
@@ -378,7 +380,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                 onPressed: () {
                                   setState(() {
                                     _emailCtrl.text = "customer@mdpay.mn";
-                                    _passCtrl.text = "Demo1234!";
+                                    _passCtrl.text = "Demo12345!";
                                   });
                                 },
                               ),
@@ -417,18 +419,21 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
   bool _hideBalance = false;
   int _pendingInvoicesCount = 0;
   int _recentTxCount = 0;
-  List<dynamic> _invoices = [];
+  List<dynamic> _receivable = []; // миний нэхэмжилсэн (авлага)
+  List<dynamic> _payable = []; // надад ирсэн (өглөг)
+  String _invoiceBox = "payable";
+  String? _walletId;
   List<dynamic> _transactions = [];
   bool _isLoading = true;
 
-  String _qrType = "DYNAMIC";
   final TextEditingController _qrAmountCtrl = TextEditingController(
     text: "125000",
   );
   final TextEditingController _qrDescCtrl = TextEditingController(
     text: "Бараа бүтээгдэхүүний төлбөр",
   );
-  String _generatedQrCode = "MDPAY_DYN_101_125000";
+  String _generatedQrCode = "";
+  String _generatedQrAmount = "";
 
   String _searchText = "";
   String _typeFilter = "ALL";
@@ -451,7 +456,9 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
         _balance = double.tryParse(res["balance"].toString()) ?? 0;
         _pendingInvoicesCount = res["pending_invoices_count"] ?? 0;
         _recentTxCount = res["recent_transactions_count"] ?? 0;
-        _invoices = List.from(res["invoices"] ?? []);
+        _receivable = List.from(res["receivable"] ?? []);
+        _payable = List.from(res["payable"] ?? []);
+        _walletId = res["wallet_id"]?.toString();
         _transactions = List.from(res["transactions"] ?? []);
         _isLoading = false;
       });
@@ -522,11 +529,6 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
           ],
         ),
         actions: [
-          IconButton(
-            tooltip: "Данс цэнэглэх",
-            onPressed: _showTopUpDialog,
-            icon: const Icon(Icons.add_card, color: Color(0xFF3B41E3)),
-          ),
           IconButton(
             tooltip: "Шинэчлэх",
             onPressed: _loadDashboard,
@@ -688,7 +690,10 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
                         onTap: () {
                           Clipboard.setData(
                             ClipboardData(
-                              text: currentUser["wallet_id"] ?? "MDP-998877",
+                              text:
+                                  _walletId ??
+                                  currentUser["wallet_id"] ??
+                                  "MDP-998877",
                             ),
                           );
                           ScaffoldMessenger.of(context).showSnackBar(
@@ -701,7 +706,9 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
                         child: Row(
                           children: [
                             Text(
-                              currentUser["wallet_id"] ?? "MDP-998877",
+                              _walletId ??
+                                  currentUser["wallet_id"] ??
+                                  "MDP-998877",
                               style: const TextStyle(
                                 color: Colors.white70,
                                 fontSize: 12,
@@ -876,11 +883,11 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Text(
-            "QR Код Үүсгэгч & Уншигч",
+            "QR төлбөр",
             style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
           ),
           const Text(
-            "Dynamic QR (үнийн дүнтэй) болон QuickPay (үнийн дүнгүй) систем.",
+            "QR уншуулж төлөх эсвэл QR нэхэмжлэл үүсгэх.",
             style: TextStyle(color: Colors.grey, fontSize: 12),
           ),
           const SizedBox(height: 16),
@@ -893,73 +900,31 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
             ),
             child: Column(
               children: [
-                const Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(
-                      Icons.camera_alt_outlined,
-                      color: Colors.white70,
-                      size: 18,
-                    ),
-                    SizedBox(width: 8),
-                    Text(
-                      "MDPay Камерын QR Уншигч",
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ],
+                const Icon(
+                  Icons.qr_code_scanner,
+                  color: Colors.white70,
+                  size: 40,
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  "QR уншуулж төлөх",
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
                 const SizedBox(height: 12),
-                const LinearProgressIndicator(
-                  color: Colors.greenAccent,
-                  backgroundColor: Colors.white12,
-                ),
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    Expanded(
-                      child: ElevatedButton.icon(
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF3B41E3),
-                          foregroundColor: Colors.white,
-                        ),
-                        onPressed: () => _openModernPayBottomSheet(
-                          qrCode: _generatedQrCode,
-                          qrType: "DYNAMIC",
-                          presetAmount:
-                              double.tryParse(_qrAmountCtrl.text) ?? 125000,
-                          description: _qrDescCtrl.text,
-                        ),
-                        icon: const Icon(Icons.qr_code_scanner, size: 18),
-                        label: const Text(
-                          "Dynamic QR Унших",
-                          style: TextStyle(fontSize: 12),
-                        ),
-                      ),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF3B41E3),
+                      foregroundColor: Colors.white,
                     ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: ElevatedButton.icon(
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.teal,
-                          foregroundColor: Colors.white,
-                        ),
-                        onPressed: () => _openModernPayBottomSheet(
-                          qrCode: "MDPAY_QUICK_OPEN",
-                          qrType: "QUICK",
-                          presetAmount: 0,
-                          description: "QuickPay Шууд Төлбөр",
-                        ),
-                        icon: const Icon(Icons.flash_on, size: 18),
-                        label: const Text(
-                          "QuickPay Унших",
-                          style: TextStyle(fontSize: 12),
-                        ),
-                      ),
-                    ),
-                  ],
+                    onPressed: _scanAndPay,
+                    icon: const Icon(Icons.camera_alt_outlined),
+                    label: const Text("Камер нээх"),
+                  ),
                 ),
               ],
             ),
@@ -975,50 +940,22 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const Text(
-                  "API-аар QR Код Үүсгэх (Вэбсайт / Мерчант)",
+                  "QR нэхэмжлэл үүсгэх",
                   style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
                 ),
                 const SizedBox(height: 12),
-                Row(
-                  children: [
-                    Expanded(
-                      child: ChoiceChip(
-                        label: const Text("Dynamic QR (Дүнтэй)"),
-                        selected: _qrType == "DYNAMIC",
-                        onSelected: (_) => setState(() {
-                          _qrType = "DYNAMIC";
-                          _qrAmountCtrl.text = "125000";
-                        }),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: ChoiceChip(
-                        label: const Text("QuickPay (Дүнгүй)"),
-                        selected: _qrType == "QUICK",
-                        onSelected: (_) => setState(() {
-                          _qrType = "QUICK";
-                          _qrAmountCtrl.text = "0";
-                        }),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                if (_qrType == "DYNAMIC") ...[
-                  TextField(
-                    controller: _qrAmountCtrl,
-                    keyboardType: TextInputType.number,
-                    decoration: InputDecoration(
-                      labelText: "Үнийн дүн (₮)",
-                      prefixIcon: const Icon(Icons.payments_outlined),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
+                TextField(
+                  controller: _qrAmountCtrl,
+                  keyboardType: TextInputType.number,
+                  decoration: InputDecoration(
+                    labelText: "Үнийн дүн (₮)",
+                    prefixIcon: const Icon(Icons.payments_outlined),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
                     ),
                   ),
-                  const SizedBox(height: 12),
-                ],
+                ),
+                const SizedBox(height: 12),
                 TextField(
                   controller: _qrDescCtrl,
                   decoration: InputDecoration(
@@ -1040,80 +977,47 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
                     ),
                     onPressed: () async {
                       final res = await _apiService.sendRequest("generate_qr", {
-                        "qr_type": _qrType,
-                        "amount": _qrAmountCtrl.text,
-                        "description": _qrDescCtrl.text,
+                        "amount": _qrAmountCtrl.text.trim(),
+                        "description": _qrDescCtrl.text.trim(),
                       });
                       if (!mounted) return;
                       if (res["status"] == "success") {
-                        setState(() => _generatedQrCode = res["qr_code"]);
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text("QR Код амжилттай үүслээ!"),
-                            backgroundColor: Colors.green,
-                          ),
-                        );
+                        setState(() {
+                          _generatedQrCode = res["qr_code"] ?? "";
+                          _generatedQrAmount = _qrAmountCtrl.text.trim();
+                        });
+                        _loadDashboard();
                       } else {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text(res["message"] ?? ""),
-                            backgroundColor: Colors.redAccent,
-                          ),
-                        );
+                        _snack(res["message"] ?? "Алдаа гарлаа", error: true);
                       }
                     },
                     icon: const Icon(Icons.qr_code),
-                    label: const Text("Шинэ QR Код Үүсгэх"),
+                    label: const Text("Шинэ QR үүсгэх"),
                   ),
                 ),
-                const Divider(height: 30, thickness: 1),
-                Center(
-                  child: Container(
-                    width: 240,
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFF8F9FC),
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(
-                        color: const Color(0xFF3B41E3),
-                        width: 1.5,
-                      ),
-                    ),
+                if (_generatedQrCode.isNotEmpty) ...[
+                  const Divider(height: 30),
+                  Center(
                     child: Column(
                       children: [
-                        const Text(
-                          "● MDpay QR",
-                          style: TextStyle(
-                            color: Color(0xFF3B41E3),
+                        Text(
+                          "$_generatedQrAmount ₮",
+                          style: const TextStyle(
+                            fontSize: 20,
                             fontWeight: FontWeight.bold,
                           ),
                         ),
+                        const SizedBox(height: 8),
+                        QrImageView(data: _generatedQrCode, size: 200),
                         const SizedBox(height: 4),
-                        Text(
-                          _qrType == "DYNAMIC"
-                              ? "${_qrAmountCtrl.text} ₮"
-                              : "Дүн оруулж төлөх",
-                          style: const TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        const Icon(
-                          Icons.qr_code_2,
-                          size: 130,
-                          color: Color(0xFF1A1F36),
-                        ),
-                        Text(
-                          _generatedQrCode,
-                          style: const TextStyle(
-                            fontSize: 11,
-                            color: Colors.grey,
-                          ),
+                        const Text(
+                          "Төлөгч MDPay апп-аар уншуулна",
+                          style: TextStyle(fontSize: 11, color: Colors.grey),
                         ),
                       ],
                     ),
                   ),
-                ),
+                ],
               ],
             ),
           ),
@@ -1122,148 +1026,154 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
     );
   }
 
-  void _openModernPayBottomSheet({
-    required String qrCode,
-    required String qrType,
-    required double presetAmount,
-    required String description,
-    int? invoiceId,
-  }) {
-    final TextEditingController payAmountCtrl = TextEditingController(
-      text: qrType == "DYNAMIC" ? presetAmount.toStringAsFixed(0) : "",
-    );
-
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+  void _snack(String msg, {bool error = false}) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(msg),
+        backgroundColor: error ? Colors.redAccent : Colors.green,
       ),
-      builder: (context) {
-        return Padding(
-          padding: EdgeInsets.only(
-            left: 24,
-            right: 24,
-            top: 24,
-            bottom: MediaQuery.of(context).viewInsets.bottom + 24,
-          ),
-          child: Column(
+    );
+  }
+
+  /// Камер нээж QR уншаад, нэхэмжлэлийг харуулж, нууц үгээр төлнө
+  Future<void> _scanAndPay() async {
+    final code = await Navigator.push<String>(
+      context,
+      MaterialPageRoute(builder: (_) => const QrScannerScreen()),
+    );
+    if (code == null || !mounted) return;
+    try {
+      final inv = await ApiService.getInvoice(code);
+      if (!mounted) return;
+      await _confirmAndPay(inv);
+    } on ApiException catch (e) {
+      if (mounted) _snack(e.message, error: true);
+    }
+  }
+
+  /// Нэхэмжлэлийн мэдээлэл + нууц үг асууж төлнө (QR болон жагсаалтаас хоёуланд)
+  Future<void> _confirmAndPay(Map<String, dynamic> inv) async {
+    final passCtrl = TextEditingController();
+    bool busy = false;
+    String? error;
+    final payable = inv['status'] == 'PENDING' && inv['isExpired'] != true;
+
+    await showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogCtx) => StatefulBuilder(
+        builder: (ctx, setD) => AlertDialog(
+          title: const Text("Төлбөр баталгаажуулах"),
+          content: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Center(
-                child: Container(
-                  width: 40,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: Colors.black26,
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                ),
+              Text(
+                "Хүлээн авагч: ${inv['issuerName']}",
+                style: const TextStyle(fontWeight: FontWeight.bold),
               ),
-              const SizedBox(height: 16),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    qrType == "DYNAMIC"
-                        ? "Dynamic QR Төлбөр"
-                        : "QuickPay Шууд Төлбөр",
-                    style: const TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  Chip(
-                    label: Text(qrType),
-                    backgroundColor: const Color(0xFFEDF0FF),
-                  ),
-                ],
-              ),
+              Text("${inv['description']}"),
               const SizedBox(height: 8),
               Text(
-                "QR код: $qrCode",
-                style: const TextStyle(color: Colors.grey, fontSize: 12),
-              ),
-              Text(
-                "Гүйлгээний утга: $description",
-                style: const TextStyle(fontWeight: FontWeight.w600),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                "Боломжит үлдэгдэл: ${_balance.toStringAsFixed(0)} ₮",
+                "${inv['amount']} ₮",
                 style: const TextStyle(
-                  color: Color(0xFF3B41E3),
+                  fontSize: 26,
                   fontWeight: FontWeight.bold,
                 ),
               ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: payAmountCtrl,
-                readOnly: qrType == "DYNAMIC",
-                keyboardType: TextInputType.number,
-                decoration: InputDecoration(
-                  labelText: qrType == "DYNAMIC"
-                      ? "Төлөх дүн (API-аас ирсэн дүн)"
-                      : "Төлөх үнийн дүнгээ оруулна уу (₮)",
-                  prefixIcon: const Icon(Icons.payments_outlined),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(14),
+              if (!payable)
+                const Padding(
+                  padding: EdgeInsets.only(top: 8),
+                  child: Text(
+                    "Энэ нэхэмжлэлийг төлөх боломжгүй",
+                    style: TextStyle(color: Colors.redAccent),
+                  ),
+                )
+              else ...[
+                const SizedBox(height: 12),
+                TextField(
+                  controller: passCtrl,
+                  obscureText: true,
+                  autofocus: true,
+                  decoration: const InputDecoration(
+                    labelText: "Нууц үг",
+                    prefixIcon: Icon(Icons.lock_outline),
                   ),
                 ),
-              ),
-              const SizedBox(height: 20),
-              SizedBox(
-                width: double.infinity,
-                height: 50,
-                child: ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF3B41E3),
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                  ),
-                  onPressed: () async {
-                    Navigator.pop(context);
-                    final res = await _apiService.sendRequest(
-                      "pay_qr_or_invoice",
-                      {
-                        "amount": payAmountCtrl.text.trim(),
-                        "description": description,
-                        "counterparty": qrCode,
-                        "method": qrType,
-                        "invoice_id": invoiceId,
-                      },
-                    );
-
-                    if (!mounted) return;
-                    if (res["status"] == "success") {
-                      await _loadDashboard();
-                      _showSuccessReceiptDialog(
-                        amount: payAmountCtrl.text.trim(),
-                        desc: description,
-                        code: qrCode,
-                      );
-                    } else {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text(res["message"] ?? "Алдаа гарлаа"),
-                          backgroundColor: Colors.redAccent,
-                        ),
-                      );
-                    }
-                  },
-                  child: const Text(
-                    "Төлбөр баталгаажуулах",
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                  ),
-                ),
-              ),
+              ],
+              if (error != null) ...[
+                const SizedBox(height: 8),
+                Text(error!, style: const TextStyle(color: Colors.redAccent)),
+              ],
             ],
           ),
-        );
-      },
+          actions: [
+            TextButton(
+              onPressed: busy ? null : () => Navigator.pop(dialogCtx),
+              child: const Text("Болих"),
+            ),
+            ElevatedButton(
+              onPressed: busy || !payable
+                  ? null
+                  : () async {
+                      setD(() {
+                        busy = true;
+                        error = null;
+                      });
+                      try {
+                        await ApiService.payInvoice(
+                          '${inv['id']}',
+                          passCtrl.text,
+                        );
+                        if (dialogCtx.mounted) Navigator.pop(dialogCtx);
+                        if (!mounted) return;
+                        await _loadDashboard();
+                        _showSuccessReceiptDialog(
+                          amount: '${inv['amount']}',
+                          desc: '${inv['description']}',
+                          code: '${inv['issuerName']}',
+                        );
+                      } on ApiException catch (e) {
+                        setD(() {
+                          busy = false;
+                          error = e.message;
+                        });
+                      }
+                    },
+              child: Text(busy ? "Түр хүлээнэ үү..." : "Төлөх"),
+            ),
+          ],
+        ),
+      ),
+    );
+    passCtrl.dispose();
+  }
+
+  void _showQrDialog(Map<String, dynamic> inv) {
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: Text("Нэхэмжлэл #${inv['id']}"),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              "${inv['amount']} ₮",
+              style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+            ),
+            Text("${inv['description']}"),
+            const SizedBox(height: 12),
+            if ((inv['qrText'] ?? '').toString().isNotEmpty)
+              QrImageView(data: inv['qrText'], size: 200),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text("Хаах"),
+          ),
+        ],
+      ),
     );
   }
 
@@ -1302,7 +1212,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
             Text("Утга: $desc", textAlign: TextAlign.center),
             const SizedBox(height: 4),
             Text(
-              "Код: $code",
+              "Хүлээн авагч: $code",
               style: const TextStyle(fontSize: 12, color: Colors.grey),
             ),
             const SizedBox(height: 16),
@@ -1315,47 +1225,6 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
             ),
           ],
         ),
-      ),
-    );
-  }
-
-  void _showTopUpDialog() {
-    final amountCtrl = TextEditingController(text: "500000");
-    showDialog(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text("Данс цэнэглэх (Банкны API)"),
-        content: TextField(
-          controller: amountCtrl,
-          keyboardType: TextInputType.number,
-          decoration: const InputDecoration(
-            labelText: "Цэнэглэх дүн (₮)",
-            prefixIcon: Icon(Icons.add_card),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text("Болих"),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              Navigator.pop(context);
-              final res = await _apiService.sendRequest("top_up", {
-                "amount": amountCtrl.text.trim(),
-              });
-              if (!mounted) return;
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text(res["message"] ?? ""),
-                  backgroundColor: Colors.green,
-                ),
-              );
-              _loadDashboard();
-            },
-            child: const Text("Цэнэглэх"),
-          ),
-        ],
       ),
     );
   }
@@ -1569,84 +1438,190 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
   // 4-Р ХУУДАС: НЭХЭМЖЛЭЛ ҮҮСГЭХ БА ТӨЛӨХ
   // ==========================================================================
   void _showCreateInvoiceDialog() {
-    final emailCtrl = TextEditingController(text: "customer@mdpay.mn");
+    final accCtrl = TextEditingController();
     final amountCtrl = TextEditingController();
     final descCtrl = TextEditingController();
+    bool direct = false; // false = QR нэхэмжлэл, true = хүнд нэхэмжлэх
+    Map<String, dynamic>? receiver;
+    bool busy = false;
+    String? error;
 
     showDialog(
       context: context,
-      builder: (_) => AlertDialog(
-        title: const Text("Имэйлээр нэхэмжлэл үүсгэх"),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: emailCtrl,
-                decoration: const InputDecoration(
-                  labelText: "Төлөгчийн И-мэйл хаяг",
-                  prefixIcon: Icon(Icons.alternate_email),
-                ),
+      barrierDismissible: false,
+      builder: (dialogCtx) => StatefulBuilder(
+        builder: (ctx, setD) {
+          Future<void> check() async {
+            setD(() {
+              busy = true;
+              error = null;
+              receiver = null;
+            });
+            final res = await _apiService.sendRequest("lookup_account", {
+              "accountNumber": accCtrl.text.trim(),
+            });
+            setD(() {
+              busy = false;
+              if (res["status"] == "success") {
+                receiver = Map<String, dynamic>.from(res["account"]);
+              } else {
+                error = res["message"] ?? "Данс олдсонгүй";
+              }
+            });
+          }
+
+          Future<void> submit() async {
+            if ((int.tryParse(amountCtrl.text.trim()) ?? 0) <= 0) {
+              setD(() => error = "Дүн оруулна уу");
+              return;
+            }
+            if (direct && receiver == null) {
+              setD(() => error = "Эхлээд дансны дугаарыг шалгана уу");
+              return;
+            }
+            setD(() {
+              busy = true;
+              error = null;
+            });
+            try {
+              final inv = await ApiService.createInvoice(
+                amountCtrl.text.trim(),
+                description: descCtrl.text.trim(),
+                receiverAccountNumber: direct ? accCtrl.text.trim() : null,
+              );
+              if (dialogCtx.mounted) Navigator.pop(dialogCtx);
+              if (!mounted) return;
+              await _loadDashboard();
+              setState(() => _invoiceBox = "receivable");
+              if (!direct) {
+                _showQrDialog(inv);
+              } else {
+                _snack("Нэхэмжлэл ${receiver?['name']}-д илгээгдлээ");
+              }
+            } on ApiException catch (e) {
+              setD(() {
+                busy = false;
+                error = e.message;
+              });
+            }
+          }
+
+          return AlertDialog(
+            title: const Text("Шинэ нэхэмжлэл"),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      ChoiceChip(
+                        label: const Text("QR нэхэмжлэл"),
+                        selected: !direct,
+                        onSelected: (_) => setD(() {
+                          direct = false;
+                          error = null;
+                        }),
+                      ),
+                      const SizedBox(width: 8),
+                      ChoiceChip(
+                        label: const Text("Хүнд нэхэмжлэх"),
+                        selected: direct,
+                        onSelected: (_) => setD(() {
+                          direct = true;
+                          error = null;
+                        }),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    direct
+                        ? "Зөвхөн сонгосон хүн төлж чадна."
+                        : "QR-ийг хэн ч уншиж төлж болно.",
+                    style: const TextStyle(fontSize: 12, color: Colors.grey),
+                  ),
+                  if (direct) ...[
+                    TextField(
+                      controller: accCtrl,
+                      keyboardType: TextInputType.number,
+                      onChanged: (_) => setD(() => receiver = null),
+                      decoration: const InputDecoration(
+                        labelText: "Төлөгчийн дансны дугаар",
+                        prefixIcon: Icon(Icons.numbers),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    if (receiver == null)
+                      OutlinedButton.icon(
+                        onPressed: busy || accCtrl.text.trim().isEmpty
+                            ? null
+                            : check,
+                        icon: const Icon(Icons.search),
+                        label: Text(busy ? "Шалгаж байна..." : "Шалгах"),
+                      )
+                    else
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFE6F4EA),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Text(
+                          "${receiver!['name']} · ${receiver!['accountNumber']}",
+                          style: const TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                  ],
+                  TextField(
+                    controller: amountCtrl,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      labelText: "Нэхэмжлэх дүн (₮)",
+                      prefixIcon: Icon(Icons.payments_outlined),
+                    ),
+                  ),
+                  TextField(
+                    controller: descCtrl,
+                    decoration: const InputDecoration(
+                      labelText: "Нэхэмжлэлийн утга",
+                      prefixIcon: Icon(Icons.description_outlined),
+                    ),
+                  ),
+                  if (error != null) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      error!,
+                      style: const TextStyle(color: Colors.redAccent),
+                    ),
+                  ],
+                ],
               ),
-              const SizedBox(height: 10),
-              TextField(
-                controller: amountCtrl,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(
-                  labelText: "Нэхэмжлэх дүн (₮)",
-                  prefixIcon: Icon(Icons.payments_outlined),
-                ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: busy ? null : () => Navigator.pop(dialogCtx),
+                child: const Text("Болих"),
               ),
-              const SizedBox(height: 10),
-              TextField(
-                controller: descCtrl,
-                decoration: const InputDecoration(
-                  labelText: "Нэхэмжлэлийн утга",
-                  prefixIcon: Icon(Icons.description_outlined),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF3B41E3),
+                  foregroundColor: Colors.white,
                 ),
+                onPressed: busy ? null : submit,
+                child: Text(busy ? "Түр хүлээнэ үү..." : "Үүсгэх"),
               ),
             ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text("Болих"),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF3B41E3),
-              foregroundColor: Colors.white,
-            ),
-            onPressed: () async {
-              Navigator.pop(context);
-              final res = await _apiService.sendRequest("create_invoice", {
-                "sender_email": currentUser["email"],
-                "receiver_email": emailCtrl.text.trim(),
-                "amount": amountCtrl.text.trim(),
-                "description": descCtrl.text.trim(),
-              });
-              if (!mounted) return;
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text(res["message"] ?? ""),
-                  backgroundColor: res["status"] == "success"
-                      ? Colors.green
-                      : Colors.redAccent,
-                ),
-              );
-              if (res["status"] == "success") {
-                _loadDashboard();
-              }
-            },
-            child: const Text("Илгээх"),
-          ),
-        ],
+          );
+        },
       ),
     );
   }
 
   Widget _buildInvoicesTab() {
+    final list = _invoiceBox == "payable" ? _payable : _receivable;
+
     return Padding(
       padding: const EdgeInsets.all(16),
       child: Column(
@@ -1655,21 +1630,9 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               const Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      "Нэхэмжлэлүүд",
-                      style: TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    Text(
-                      "Имэйлээр ирсэн болон үүсгэсэн нэхэмжлэл",
-                      style: TextStyle(fontSize: 12, color: Colors.grey),
-                    ),
-                  ],
+                child: Text(
+                  "Нэхэмжлэлүүд",
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
                 ),
               ),
               ElevatedButton.icon(
@@ -1683,94 +1646,140 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
               ),
             ],
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              ChoiceChip(
+                label: Text("Өглөг (надад ирсэн) ${_payable.length}"),
+                selected: _invoiceBox == "payable",
+                onSelected: (_) => setState(() => _invoiceBox = "payable"),
+              ),
+              const SizedBox(width: 8),
+              ChoiceChip(
+                label: Text("Авлага (миний) ${_receivable.length}"),
+                selected: _invoiceBox == "receivable",
+                onSelected: (_) => setState(() => _invoiceBox = "receivable"),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
           Expanded(
-            child: ListView.builder(
-              itemCount: _invoices.length,
-              itemBuilder: (context, index) {
-                final inv = _invoices[index];
-                final bool isPaid = inv["status"] == "PAID";
+            child: list.isEmpty
+                ? Center(
+                    child: Text(
+                      _invoiceBox == "payable"
+                          ? "Танд ирсэн нэхэмжлэл алга"
+                          : "Нэхэмжилсэн нэхэмжлэл алга",
+                    ),
+                  )
+                : ListView.builder(
+                    itemCount: list.length,
+                    itemBuilder: (context, index) {
+                      final inv = Map<String, dynamic>.from(list[index]);
+                      final bool isPaid = inv["status"] == "PAID";
+                      final bool closed =
+                          inv["status"] == "CANCELLED" ||
+                          inv["isExpired"] == true;
+                      final bool pending = !isPaid && !closed;
+                      final bool inbox = _invoiceBox == "payable";
+                      final String who = inbox
+                          ? "Нэхэмжилсэн: ${inv['issuerName']}"
+                          : (inv['isDirected'] == true
+                                ? "Төлөгч: ${inv['receiverName']}"
+                                : "QR (хэн ч төлнө)");
 
-                return Card(
-                  elevation: 0,
-                  color: Colors.white,
-                  margin: const EdgeInsets.only(bottom: 12),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                  child: ListTile(
-                    contentPadding: const EdgeInsets.all(14),
-                    leading: CircleAvatar(
-                      backgroundColor: isPaid
-                          ? const Color(0xFFE6F4EA)
-                          : const Color(0xFFFFF3E0),
-                      child: Icon(
-                        isPaid ? Icons.check_circle : Icons.schedule,
-                        color: isPaid ? Colors.green : Colors.orange,
-                      ),
-                    ),
-                    title: Text(
-                      inv["description"],
-                      style: const TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                    subtitle: Text(
-                      "Илгээгч: ${inv['sender_email']}\nТөлөгч: ${inv['receiver_email']}",
-                      style: const TextStyle(fontSize: 12),
-                    ),
-                    trailing: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        Text(
-                          "${inv['amount']} ₮",
-                          style: const TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 15,
-                          ),
+                      return Card(
+                        elevation: 0,
+                        color: Colors.white,
+                        margin: const EdgeInsets.only(bottom: 12),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
                         ),
-                        const SizedBox(height: 4),
-                        isPaid
-                            ? const Text(
-                                "ТӨЛӨГДСӨН",
-                                style: TextStyle(
-                                  color: Colors.green,
-                                  fontSize: 11,
+                        child: ListTile(
+                          contentPadding: const EdgeInsets.all(14),
+                          onTap: !inbox && pending
+                              ? () => _showQrDialog(inv)
+                              : null,
+                          leading: CircleAvatar(
+                            backgroundColor: isPaid
+                                ? const Color(0xFFE6F4EA)
+                                : const Color(0xFFFFF3E0),
+                            child: Icon(
+                              isPaid ? Icons.check_circle : Icons.schedule,
+                              color: isPaid ? Colors.green : Colors.orange,
+                            ),
+                          ),
+                          title: Text(
+                            (inv["description"] ?? "").toString().isEmpty
+                                ? "Нэхэмжлэл #${inv['id']}"
+                                : inv["description"],
+                            style: const TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                          subtitle: Text(
+                            who,
+                            style: const TextStyle(fontSize: 12),
+                          ),
+                          trailing: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: [
+                              Text(
+                                "${inv['amount']} ₮",
+                                style: const TextStyle(
                                   fontWeight: FontWeight.bold,
-                                ),
-                              )
-                            : SizedBox(
-                                height: 28,
-                                child: ElevatedButton(
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: const Color(0xFF3B41E3),
-                                    foregroundColor: Colors.white,
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 12,
-                                    ),
-                                  ),
-                                  onPressed: () => _openModernPayBottomSheet(
-                                    qrCode: inv["qr_code"],
-                                    qrType: "DYNAMIC",
-                                    presetAmount:
-                                        double.tryParse(
-                                          inv["amount"].toString(),
-                                        ) ??
-                                        0,
-                                    description: inv["description"],
-                                    invoiceId: inv["id"],
-                                  ),
-                                  child: const Text(
-                                    "Төлөх",
-                                    style: TextStyle(fontSize: 11),
-                                  ),
+                                  fontSize: 15,
                                 ),
                               ),
-                      ],
-                    ),
+                              const SizedBox(height: 4),
+                              if (isPaid)
+                                const Text(
+                                  "ТӨЛӨГДСӨН",
+                                  style: TextStyle(
+                                    color: Colors.green,
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                )
+                              else if (closed)
+                                const Text(
+                                  "ХААГДСАН",
+                                  style: TextStyle(
+                                    color: Colors.grey,
+                                    fontSize: 11,
+                                  ),
+                                )
+                              else if (inbox)
+                                SizedBox(
+                                  height: 28,
+                                  child: ElevatedButton(
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: const Color(0xFF3B41E3),
+                                      foregroundColor: Colors.white,
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 12,
+                                      ),
+                                    ),
+                                    onPressed: () => _confirmAndPay(inv),
+                                    child: const Text(
+                                      "Төлөх",
+                                      style: TextStyle(fontSize: 11),
+                                    ),
+                                  ),
+                                )
+                              else
+                                const Text(
+                                  "QR харах ›",
+                                  style: TextStyle(
+                                    color: Color(0xFF3B41E3),
+                                    fontSize: 11,
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
                   ),
-                );
-              },
-            ),
           ),
         ],
       ),
@@ -1885,6 +1894,32 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
                   ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class QrScannerScreen extends StatefulWidget {
+  const QrScannerScreen({super.key});
+  @override
+  State<QrScannerScreen> createState() => _QrScannerScreenState();
+}
+
+class _QrScannerScreenState extends State<QrScannerScreen> {
+  bool _done = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text("QR уншуулах")),
+      body: MobileScanner(
+        onDetect: (capture) {
+          if (_done || capture.barcodes.isEmpty) return;
+          final raw = capture.barcodes.first.rawValue;
+          if (raw == null || raw.isEmpty) return;
+          _done = true;
+          Navigator.pop(context, raw);
+        },
       ),
     );
   }

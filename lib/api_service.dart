@@ -24,7 +24,6 @@ class ApiService {
       _storage.write(key: _tokenKey, value: t);
   static Future<void> logout() => _storage.delete(key: _tokenKey);
 
-  /// Бүх action энэ нэг функцээр дамжина
   static Future<Map<String, dynamic>> _call(
     String action, {
     Map<String, dynamic> data = const {},
@@ -50,9 +49,15 @@ class ApiService {
       throw ApiException('Сервертэй холбогдож чадсангүй');
     }
 
-    final json = jsonDecode(res.body) as Map<String, dynamic>;
+    Map<String, dynamic> json;
+    try {
+      json = jsonDecode(res.body) as Map<String, dynamic>;
+    } catch (_) {
+      throw ApiException('Серверийн хариу буруу байна (${res.statusCode})');
+    }
     if (res.statusCode >= 400) {
-      if (res.statusCode == 401 && auth) await logout(); // token хүчингүй
+      // Зөвхөн нэвтрэлтийн token хүчингүй үед гаргана. Нууц үг буруу (403) үед гаргахгүй.
+      if (res.statusCode == 401 && auth) await logout();
       throw ApiException(json['error'] ?? 'Алдаа гарлаа', res.statusCode);
     }
     return json;
@@ -69,7 +74,7 @@ class ApiService {
       auth: false,
     );
     await _saveToken(json['token']);
-    return json['user'];
+    return Map<String, dynamic>.from(json['user']);
   }
 
   static Future<Map<String, dynamic>> register({
@@ -91,34 +96,54 @@ class ApiService {
       auth: false,
     );
     await _saveToken(json['token']);
-    return json['user'];
+    return Map<String, dynamic>.from(json['user']);
   }
 
+  // ---------- Data ----------
   static Future<Map<String, dynamic>> me() => _call('me');
   static Future<Map<String, dynamic>> summary() => _call('summary');
 
   static Future<List<dynamic>> transactions() async =>
       (await _call('transactions'))['transactions'];
 
-  static Future<List<dynamic>> invoices() async =>
-      (await _call('invoices'))['invoices'];
+  /// box: 'receivable' (миний нэхэмжилсэн) | 'payable' (надад ирсэн)
+  static Future<List<dynamic>> invoices({String box = 'receivable'}) async =>
+      (await _call('invoices', data: {'box': box}))['invoices'];
 
   static Future<Map<String, dynamic>> createInvoice(
     String amount, {
     String? description,
-  }) => _call(
-    'create_invoice',
-    data: {
-      'amount': amount,
-      if (description != null) 'description': description,
-    },
-  );
+    String? receiverAccountNumber,
+  }) async {
+    final r = await _call(
+      'create_invoice',
+      data: {
+        'amount': amount,
+        if (description != null && description.isNotEmpty)
+          'description': description,
+        if (receiverAccountNumber != null && receiverAccountNumber.isNotEmpty)
+          'receiverAccountNumber': receiverAccountNumber,
+      },
+    );
+    return Map<String, dynamic>.from(r['invoice']);
+  }
+
+  static Future<Map<String, dynamic>> getInvoice(String code) async =>
+      Map<String, dynamic>.from(
+        (await _call('get_invoice', data: {'code': code}))['invoice'],
+      );
+
+  static Future<Map<String, dynamic>> payInvoice(String id, String password) =>
+      _call('pay_invoice', data: {'id': id, 'password': password});
+
   static Future<Map<String, dynamic>> lookupAccount(
     String accountNumber,
-  ) async => (await _call(
-    'lookup_account',
-    data: {'accountNumber': accountNumber},
-  ))['account'];
+  ) async => Map<String, dynamic>.from(
+    (await _call(
+      'lookup_account',
+      data: {'accountNumber': accountNumber},
+    ))['account'],
+  );
 
   static Future<Map<String, dynamic>> transfer({
     required String accountNumber,
@@ -134,11 +159,13 @@ class ApiService {
       if (note != null && note.isNotEmpty) 'note': note,
     },
   );
+
   static bool _isIncome(String kind) {
     const incomeKinds = {'income', 'credit', 'deposit', 'topup', 'transfer_in'};
     return incomeKinds.contains(kind.toLowerCase());
   }
 
+  // ---------- main.dart-д зориулсан адаптер ----------
   Future<Map<String, dynamic>> sendRequest(
     String action,
     Map<String, dynamic> data,
@@ -165,25 +192,19 @@ class ApiService {
         case 'get_dashboard':
           final s = await ApiService.summary();
           final txs = await ApiService.transactions();
-          final invs = await ApiService.invoices();
+          final receivable = await ApiService.invoices(box: 'receivable');
+          final payable = await ApiService.invoices(box: 'payable');
+          final pendingPayable = payable
+              .where((i) => i['status'] == 'PENDING' && i['isExpired'] != true)
+              .length;
           return {
             'status': 'success',
             'balance': s['balance'],
-            'pending_invoices_count': s['pendingInvoices'] ?? 0,
+            'wallet_id': s['walletId'],
+            'pending_invoices_count': pendingPayable,
             'recent_transactions_count': txs.length,
-            'invoices': invs
-                .map(
-                  (i) => {
-                    'id': int.tryParse('${i['id']}'),
-                    'description': i['description'] ?? '',
-                    'amount': i['amount'],
-                    'status': i['status'],
-                    'sender_email': '',
-                    'receiver_email': '',
-                    'qr_code': 'MDPAY_INV_${i['id']}',
-                  },
-                )
-                .toList(),
+            'receivable': receivable,
+            'payable': payable,
             'transactions': txs
                 .map(
                   (t) => {
@@ -200,17 +221,16 @@ class ApiService {
           };
 
         case 'generate_qr':
-          if (data['qr_type'] == 'QUICK') {
-            return {
-              'status': 'error',
-              'message': 'QuickPay (дүнгүй) QR серверт хараахан хийгдээгүй',
-            };
-          }
-          final r = await ApiService.createInvoice(
+          final inv = await ApiService.createInvoice(
             '${data['amount']}',
             description: data['description'],
           );
-          return {'status': 'success', 'qr_code': r['qrText']};
+          return {
+            'status': 'success',
+            'invoice': inv,
+            'qr_code': inv['qrText'],
+          };
+
         case 'lookup_account':
           final acc = await ApiService.lookupAccount(
             '${data['accountNumber']}',
@@ -225,6 +245,7 @@ class ApiService {
             note: data['note'],
           );
           return {'status': 'success', 'message': 'Шилжүүлэг амжилттай'};
+
         default:
           return {
             'status': 'error',
